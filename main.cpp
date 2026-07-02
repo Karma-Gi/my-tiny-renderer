@@ -5,6 +5,8 @@
 #include "model.h"
 #include <iostream>
 #include <algorithm>
+#include <limits>
+#include <vector>
 
 constexpr TGAColor white = {255, 255, 255, 255}; // attention, BGRA order
 constexpr TGAColor green = {0, 255, 0, 255};
@@ -108,12 +110,21 @@ float signed_triangle_area(int ax, int ay, int bx, int by, int cx, int cy) // �
     return .5 * ((ax * by - ay * bx) + (bx * cy - by * cx) + (cx * ay - cy * ax));
 }
 
-void triangle(int ax, int ay, int az, TGAColor color_a, int bx, int by, int bz, TGAColor color_b, int cx, int cy, int cz, TGAColor color_c, TGAImage &framebuffer, TGAImage &zbuffer, bool hole = false)
+void triangle(int ax, int ay, double az, TGAColor color_a,
+              int bx, int by, double bz, TGAColor color_b,
+              int cx, int cy, double cz, TGAColor color_c,
+              TGAImage &framebuffer, std::vector<double> &zbuffer,
+              TGAImage &zbuffer_img,
+              bool hole = false)
 {
-    int bbmin_x = std::min(std::min(ax, bx), cx);
-    int bbmax_x = std::max(std::max(ax, bx), cx);
-    int bbmin_y = std::min(std::min(ay, by), cy);
-    int bbmax_y = std::max(std::max(ay, by), cy);
+    int width = framebuffer.width();
+    int height = framebuffer.height();
+
+    int bbmin_x = std::max(0, std::min({ax, bx, cx}));
+    int bbmax_x = std::min(width - 1, std::max({ax, bx, cx}));
+    int bbmin_y = std::max(0, std::min({ay, by, cy}));
+    int bbmax_y = std::min(height - 1, std::max({ay, by, cy}));
+
     double total_area = signed_triangle_area(ax, ay, bx, by, cx, cy);
     if (total_area < 1)
         return; // backface culling + discarding triangles that cover less than a pixel
@@ -135,14 +146,19 @@ void triangle(int ax, int ay, int az, TGAColor color_a, int bx, int by, int bz, 
             float alpha = signed_triangle_area(x, y, bx, by, cx, cy) / total_area;
             float beta = signed_triangle_area(x, y, cx, cy, ax, ay) / total_area;
             float gamma = signed_triangle_area(x, y, ax, ay, bx, by) / total_area;
-            unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+            // unsigned char z = static_cast<unsigned char>(alpha * az + beta * bz + gamma * cz);
+            double z = alpha * az + beta * bz + gamma * cz;
+            int idx = x + y * width;
 
             if ((alpha < 0 || beta < 0 || gamma < 0))
                 continue;
 
-            if (zbuffer.get(x, y)[0] >= z)
+            if (zbuffer[idx] >= z)
                 continue;
-            zbuffer.set(x, y, {z});
+            zbuffer[idx] = z;
+
+            std::uint8_t gray = static_cast<std::uint8_t>(std::clamp(z, 0.0, 255.0));
+            zbuffer_img.set(x, y, {gray});
 
             if (hole == true && alpha > 1. / 6. && beta > 1. / 6. && gamma > 1. / 6.)
                 continue;
@@ -185,7 +201,8 @@ int main(int argc, char **argv)
     constexpr int width = 800;
     constexpr int height = 800;
     TGAImage framebuffer(width, height, TGAImage::RGB);
-    TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
+    TGAImage zbuffer_img(width, height, TGAImage::GRAYSCALE);
+    std::vector<double> zbuffer(width * height, -std::numeric_limits<double>::infinity());
 
     // 默认模型
     const char *filename = "obj/diablo3_pose/diablo3_pose.obj";
@@ -233,7 +250,8 @@ int main(int argc, char **argv)
         vec3 C = persp(rotate(model->vert(f[2])));
 
         vec3 verts[3] = {A, B, C};
-        int sx[3], sy[3], sz[3];
+        int sx[3], sy[3];
+        double sz[3];
         for (int i = 0; i < 3; ++i)
         {
             sx[i] = (verts[i].x + 1.0f) * width / 2.;
@@ -247,10 +265,16 @@ int main(int argc, char **argv)
             rnd_b[k] = std::rand() % 255;
             rnd_c[k] = std::rand() % 255;
         }
-        triangle(sx[0], sy[0], sz[0], rnd_a, sx[1], sy[1], sz[1], rnd_b, sx[2], sy[2], sz[2], rnd_c, framebuffer, zbuffer);
+        triangle(sx[0], sy[0], sz[0], rnd_a,
+                 sx[1], sy[1], sz[1], rnd_b,
+                 sx[2], sy[2], sz[2], rnd_c,
+                 framebuffer,
+                 zbuffer,
+                 zbuffer_img
+                );
     }
 
-    zbuffer.write_tga_file("zbuffer.tga");
+    zbuffer_img.write_tga_file("zbuffer.tga");
     framebuffer.write_tga_file("framebuffer.tga");
     delete model;
     return 0;
