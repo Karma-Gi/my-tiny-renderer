@@ -1,0 +1,5 @@
+framebuffer.tga
+zbuffer.tga
+build/
+.vscode/
+*:Zone.Identifier
