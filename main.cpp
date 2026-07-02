@@ -14,6 +14,9 @@ constexpr TGAColor red = {0, 0, 255, 255};
 constexpr TGAColor blue = {255, 128, 64, 255};
 constexpr TGAColor yellow = {0, 200, 255, 255};
 
+constexpr int width = 800;
+constexpr int height = 800;
+
 // Attempt 1: sampling issue!
 // void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
 // {
@@ -177,6 +180,13 @@ void triangle(int ax, int ay, double az, TGAColor color_a,
     }
 }
 
+vec3 project(vec3 v)
+{
+    return vec3((v.x + 1.0f) * width / 2.,
+                (v.y + 1.0f) * height / 2., // 注意：y 用 height 而不是 width
+                (v.z + 1.0f) * 255.f / 2.); // 乘以 255，将 [0, 1] 的区间放大到 [0, 255] 的颜色亮度区间
+}
+
 vec3 rotate(vec3 v)
 {
     const double theta = M_PI / 6.0;
@@ -198,8 +208,7 @@ vec3 persp(vec3 v)
 int main(int argc, char **argv)
 
 {
-    constexpr int width = 800;
-    constexpr int height = 800;
+
     TGAImage framebuffer(width, height, TGAImage::RGB);
     TGAImage zbuffer_img(width, height, TGAImage::GRAYSCALE);
     std::vector<double> zbuffer(width * height, -std::numeric_limits<double>::infinity());
@@ -224,40 +233,10 @@ int main(int argc, char **argv)
     {
         std::vector<int> f = model->face(idx); // 获取当前第idx面的所有顶点全局索引
 
-        // for (int i = 0; i < f.size(); i++)
-        // {
-        //     int current = f[i];        // 获取当前第idx面中的当前点的索引
-        //     int next = f[(i + 1) % 3]; // 获取当前第idx面中的下一个点的索引
+        auto A = project(persp(rotate(model->vert(f[0]))));
+        auto B = project(persp(rotate(model->vert(f[1]))));
+        auto C = project(persp(rotate(model->vert(f[2]))));
 
-        //     vec3 current_vert = model->vert(current);
-        //     vec3 next_vert = model->vert(next);
-
-        //     // 从[-1,1]映射到屏幕坐标[width,height]
-        //     int x0 = (current_vert.x + 1.) * width / 2.;
-        //     int y0 = (current_vert.y + 1.) * height / 2.;
-        //     int x1 = (next_vert.x + 1.) * width / 2.;
-        //     int y1 = (next_vert.y + 1.) * height / 2.;
-
-        //     line(x0, y0, x1, y1, framebuffer, red);
-        // }
-
-        // vec3 A = model->vert(f[0]);
-        // vec3 B = model->vert(f[1]);
-        // vec3 C = model->vert(f[2]);
-
-        vec3 A = persp(rotate(model->vert(f[0])));
-        vec3 B = persp(rotate(model->vert(f[1])));
-        vec3 C = persp(rotate(model->vert(f[2])));
-
-        vec3 verts[3] = {A, B, C};
-        int sx[3], sy[3];
-        double sz[3];
-        for (int i = 0; i < 3; ++i)
-        {
-            sx[i] = (verts[i].x + 1.0f) * width / 2.;
-            sy[i] = (verts[i].y + 1.0f) * height / 2.; // 注意：y 用 height 而不是 width
-            sz[i] = (verts[i].z + 1.0f) * 255.f / 2.;  // 乘以 255，将 [0, 1] 的区间放大到 [0, 255] 的颜色亮度区间
-        }
         TGAColor rnd_a, rnd_b, rnd_c;
         for (int k = 0; k < 3; ++k)
         {
@@ -265,13 +244,12 @@ int main(int argc, char **argv)
             rnd_b[k] = std::rand() % 255;
             rnd_c[k] = std::rand() % 255;
         }
-        triangle(sx[0], sy[0], sz[0], rnd_a,
-                 sx[1], sy[1], sz[1], rnd_b,
-                 sx[2], sy[2], sz[2], rnd_c,
+        triangle(A.x, A.y, A.z, rnd_a,
+                 B.x, B.y, B.z, rnd_b,
+                 C.x, C.y, C.z, rnd_c,
                  framebuffer,
                  zbuffer,
-                 zbuffer_img
-                );
+                 zbuffer_img);
     }
 
     zbuffer_img.write_tga_file("zbuffer.tga");
