@@ -184,6 +184,20 @@ double dot(const vec<n> &lhs, const vec<n> &rhs)
     return ret;
 }
 
+template <int n>
+inline double norm(const vec<n> &v)
+{
+    return std::sqrt(v * v);
+}
+
+template <int n>
+inline vec<n> normalized(vec<n> v)
+{
+    double magnitude = norm(v);
+    assert(magnitude > 1e-12);
+    return v / magnitude;
+}
+
 inline double cross(const vec2 &lhs, const vec2 &rhs)
 {
     return lhs.x * rhs.y - lhs.y * rhs.x;

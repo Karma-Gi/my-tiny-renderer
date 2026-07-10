@@ -14,8 +14,7 @@ constexpr TGAColor red = {0, 0, 255, 255};
 constexpr TGAColor blue = {255, 128, 64, 255};
 constexpr TGAColor yellow = {0, 200, 255, 255};
 
-constexpr int width = 800;
-constexpr int height = 800;
+mat<4, 4> ModelView, Viewport, Perspective;
 
 // Attempt 1: sampling issue!
 // void line(int ax, int ay, int bx, int by, TGAImage &framebuffer, TGAColor color)
@@ -180,13 +179,12 @@ void triangle(int ax, int ay, double az, TGAColor color_a,
     }
 }
 
-vec3 project(vec3 v)
-{
-    return vec3((v.x + 1.0f) * width / 2.,
-                (v.y + 1.0f) * height / 2., // 注意：y 用 height 而不是 width
-                (v.z + 1.0f) * 255.f / 2.); // 乘以 255，将 [0, 1] 的区间放大到 [0, 255] 的颜色亮度区间
-}
-
+// vec3 project(vec3 v)
+// {
+//     return vec3((v.x + 1.0f) * width / 2.,
+//                 (v.y + 1.0f) * height / 2., // 注意：y 用 height 而不是 width
+//                 (v.z + 1.0f) * 255.f / 2.); // 乘以 255，将 [0, 1] 的区间放大到 [0, 255] 的颜色亮度区间
+// }
 vec3 rotate(vec3 v)
 {
     const double theta = M_PI / 6.0;
@@ -197,7 +195,6 @@ vec3 rotate(vec3 v)
 
     return R * v;
 }
-
 vec3 persp(vec3 v)
 {
     constexpr double c = 3.;
@@ -205,55 +202,157 @@ vec3 persp(vec3 v)
     return vec3{v.x / w, v.y / w, v.z};
 }
 
+void lookat(const vec3 eye, const vec3 center, const vec3 up)
+{
+    vec3 n = normalized(eye - center);
+    vec3 l = normalized(cross(up, n));
+    vec3 m = normalized(cross(n, l));
+    ModelView = mat<4, 4>{{{l.x, l.y, l.z, 0},
+                           {m.x, m.y, m.z, 0},
+                           {n.x, n.y, n.z, 0},
+                           {0, 0, 0, 1}}} *
+                mat<4, 4>{{{1, 0, 0, -center.x},
+                           {0, 1, 0, -center.y},
+                           {0, 0, 1, -center.z},
+                           {0, 0, 0, 1}}};
+}
+
+void viewport(const int x, const int y, const int w, const int h)
+{
+    Viewport = {{{w / 2., 0, 0, x + w / 2.},
+                 {0, h / 2., 0, y + h / 2.},
+                 {0, 0, 1, 0},
+                 {0, 0, 0, 1}}};
+}
+
+void perspective(const double f)
+{
+    Perspective = {{{1, 0, 0, 0},
+                    {0, 1, 0, 0},
+                    {0, 0, 1, 0},
+                    {0, 0, -1 / f, 1}}};
+}
+
+void rasterize(vec4 clip[3], TGAImage &framebuffer, std::vector<double> &zbuffer, const TGAColor color, TGAImage &zbuffer_img)
+{
+    vec4 ndc[3] = {clip[0] / clip[0].w, clip[1] / clip[1].w, clip[2] / clip[2].w}; // normalized device coordinates (3x4 matrix)
+    vec4 screen4[3] = {
+        Viewport * ndc[0],
+        Viewport * ndc[1],
+        Viewport * ndc[2]};
+
+    vec2 screen[3] = {
+        vec2{screen4[0].x, screen4[0].y},
+        vec2{screen4[1].x, screen4[1].y},
+        vec2{screen4[2].x, screen4[2].y}};
+
+    int width = framebuffer.width();
+    int height = framebuffer.height();
+
+    int bbmin_x = std::max(0., std::min({screen[0].x, screen[1].x, screen[2].x}));
+    int bbmax_x = std::min(width - 1., std::max({screen[0].x, screen[1].x, screen[2].x}));
+    int bbmin_y = std::max(0., std::min({screen[0].y, screen[1].y, screen[2].y}));
+    int bbmax_y = std::min(height - 1., std::max({screen[0].y, screen[1].y, screen[2].y}));
+
+    mat<3, 3> ABC = {{{screen[0].x, screen[1].x, screen[2].x},
+                      {screen[0].y, screen[1].y, screen[2].y},
+                      {1., 1., 1.}}};
+    if (ABC.det() < 1.)
+        return; // backface culling + discarding triangles that cover less than a pixel
+
+    for (int x = bbmin_x; x <= bbmax_x; x++)
+    {
+        for (int y = bbmin_y; y <= bbmax_y; y++)
+        {
+            vec3 bc = ABC.invert() * vec3{static_cast<double>(x), static_cast<double>(y), 1.};
+            double alpha = bc[0];
+            double beta = bc[1];
+            double gamma = bc[2];
+            if (alpha < 0 || beta < 0 || gamma < 0)
+                continue;
+
+            double z = alpha * ndc[0].z + beta * ndc[1].z + gamma * ndc[2].z;
+            int idx = x + y * width;
+
+            if (zbuffer[idx] >= z)
+                continue;
+            zbuffer[idx] = z;
+
+            double z01 = (z + 1.0) / 2.0; // 如果 z 大致在 [-1, 1]
+            std::uint8_t gray = static_cast<std::uint8_t>(
+                std::clamp(z01, 0.0, 1.0) * 255.0);
+            zbuffer_img.set(x, y, {gray});
+            framebuffer.set(x, y, color);
+        }
+    }
+}
+
 int main(int argc, char **argv)
 
 {
+    const int width = 800; // output image size
+    const int height = 800;
+    const vec3 eye{-2, 0, 2};   // camera position
+    const vec3 center{0, 0, 0}; // camera direction
+    const vec3 up{0, 1, 0};     // camera up vector
+
+    lookat(eye, center, up);
+    perspective(norm(eye - center));
+    viewport(width / 16., width / 16., width * 7. / 8., height * 7. / 8.);
 
     TGAImage framebuffer(width, height, TGAImage::RGB);
     TGAImage zbuffer_img(width, height, TGAImage::GRAYSCALE);
     std::vector<double> zbuffer(width * height, -std::numeric_limits<double>::infinity());
 
-    // 默认模型
-    const char *filename = "obj/diablo3_pose/diablo3_pose.obj";
-
-    if (argc == 2)
+    std::vector<const char *> model_files;
+    if (argc == 1)
     {
-        filename = argv[1];
+        model_files.push_back("obj/diablo3_pose/diablo3_pose.obj");
     }
-    else if (argc > 2)
+    else
     {
-        std::cerr << "Usage: " << argv[0] << " [obj_filepath]" << std::endl;
-        return 1;
+        for (int m = 1; m < argc; m++)
+            model_files.push_back(argv[m]);
     }
 
-    std::cout << "Loading model: " << filename << std::endl;
-    Model *model = new Model(filename);
-
-    for (int idx = 0; idx < model->nfaces(); idx++)
+    for (const char *filename : model_files)
     {
-        std::vector<int> f = model->face(idx); // 获取当前第idx面的所有顶点全局索引
+        std::cout << "Loading model: " << filename << std::endl;
+        Model *model = new Model(filename);
 
-        auto A = project(persp(rotate(model->vert(f[0]))));
-        auto B = project(persp(rotate(model->vert(f[1]))));
-        auto C = project(persp(rotate(model->vert(f[2]))));
-
-        TGAColor rnd_a, rnd_b, rnd_c;
-        for (int k = 0; k < 3; ++k)
+        for (int idx = 0; idx < model->nfaces(); idx++)
         {
-            rnd_a[k] = std::rand() % 255;
-            rnd_b[k] = std::rand() % 255;
-            rnd_c[k] = std::rand() % 255;
+            std::vector<int> f = model->face(idx); // 获取当前第idx面的所有顶点全局索引
+            vec4 clip[3];
+            for (int i : {0, 1, 2})
+            {
+                vec3 v = model->vert(f[i]);
+                clip[i] = Perspective * ModelView * vec4{v.x, v.y, v.z, 1.};
+            }
+
+            // auto A = project(persp(rotate(model->vert(f[0]))));
+            // auto B = project(persp(rotate(model->vert(f[1]))));
+            // auto C = project(persp(rotate(model->vert(f[2]))));
+
+            TGAColor rnd_a, rnd_b, rnd_c;
+            for (int k = 0; k < 3; ++k)
+            {
+                rnd_a[k] = std::rand() % 255;
+                rnd_b[k] = std::rand() % 255;
+                rnd_c[k] = std::rand() % 255;
+            }
+            // triangle(A.x, A.y, A.z, rnd_a,
+            //          B.x, B.y, B.z, rnd_b,
+            //          C.x, C.y, C.z, rnd_c,
+            //          framebuffer,
+            //          zbuffer,
+            //          zbuffer_img);
+            rasterize(clip, framebuffer, zbuffer, rnd_a, zbuffer_img);
         }
-        triangle(A.x, A.y, A.z, rnd_a,
-                 B.x, B.y, B.z, rnd_b,
-                 C.x, C.y, C.z, rnd_c,
-                 framebuffer,
-                 zbuffer,
-                 zbuffer_img);
+        delete model;
     }
 
     zbuffer_img.write_tga_file("zbuffer.tga");
     framebuffer.write_tga_file("framebuffer.tga");
-    delete model;
     return 0;
 }
