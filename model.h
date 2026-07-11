@@ -1,18 +1,46 @@
 // model.h
-#pragma once // 这是一个好习惯，防止头文件被重复包含
+#pragma once // 防止头文件被重复包含
 #include <vector>
 #include "geometry.h"
+
+struct FaceVertex
+{
+    int vertex_index = -1;
+    int texcoord_index = -1;
+    int normal_index = -1;
+};
+
+using Face = std::vector<FaceVertex>;
 
 class Model
 {
 private:
+    // OBJ 文件中的原始数据
     std::vector<vec3> verts_;
-    std::vector<std::vector<int>> faces_;
+    std::vector<vec2> texcoords_;
+    std::vector<vec3> normals_;
+
+    // 每个面由若干 FaceVertex 组成
+    std::vector<Face> faces_;
 
 public:
-    Model(const char *filename); // 构造函数必须是 public，允许外部实例化
+    explicit Model(const char *filename); // 构造函数必须是 public，允许外部实例化
 
-    int nfaces();                   // 返回多边形面的总数
-    vec3 vert(int i);               // 返回第i个顶点的xyz坐标
-    std::vector<int> face(int idx); // 别忘了我们在画线循环里需要获取面的索引！
+    // 数量
+    int nfaces() const; // 返回多边形面的总数
+
+    // 根据原始全局索引获取数据
+    vec3 vert(int index) const;
+    vec2 texcoord(int index) const;
+    vec3 normal(int index) const;
+
+    // 获取一个面的索引信息
+    const Face &face(int face_index) const;
+
+    // 供 shader 使用的便捷接口：
+    // face_index 表示第几个面
+    // nthvert 表示该面的第几个顶点
+    vec3 vert(int face_index, int nthvert) const;
+    vec2 texcoord(int face_index, int nthvert) const;
+    vec3 normal(int face_index, int nthvert) const;
 };

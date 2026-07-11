@@ -2,7 +2,7 @@
 #include "our_gl.h"
 #include "model.h"
 
-extern std::vector<double> zbuffer;      // the depth buffer
+extern std::vector<double> zbuffer; // the depth buffer
 
 struct RandomShader : IShader
 {
@@ -12,19 +12,48 @@ struct RandomShader : IShader
 
     RandomShader(Model &m) : model(m) {}
 
-    virtual vec4 vertex(const int face, const int vert)
+    vec4 vertex(const int face, const int vert)
     {
         // 先取得当前面的三个全局顶点索引
-        const std::vector<int> indices = model.face(face);
-
-        const vec3 v = model.vert(indices[vert]); // current vertex in object coordinates
+        const vec3 v = model.vert(face, vert); // current vertex in object coordinates
         const vec4 gl_Position = ModelView * vec4{v.x, v.y, v.z, 1.};
         // tri[vert] = gl_Position.xyz();                            // in eye coordinates
         return Perspective * gl_Position; // in clip coordinates
     }
 
-    virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const
+    std::pair<bool, TGAColor> fragment(const vec3 bar) const override
     {
+        return {false, color}; // do not discard the pixel
+    }
+};
+
+struct PhongShader : IShader
+{
+    Model &model;
+    TGAColor color = {};
+
+    PhongShader(Model &m) : model(m) {}
+
+    vec4 vertex(const int face, const int vert)
+    {
+        // 先取得当前面的三个全局顶点索引
+        const vec3 position = model.vert(face, vert); // current vertex in object coordinate
+        const vec3 normal = model.normal(face, vert);
+        const vec2 uv = model.texcoord(face, vert);
+
+        const vec4 gl_Position = ModelView * vec4{position.x, position.y, position.z, 1.};
+
+        return Perspective * gl_Position; // in clip coordinates
+    }
+
+    std::pair<bool, TGAColor> fragment(const vec3 bar) const override
+    {
+        // Ambient light
+
+        // Diffuse Reflection
+
+        // Specular Reflection
+
         return {false, color}; // do not discard the pixel
     }
 };

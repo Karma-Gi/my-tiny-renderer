@@ -5,7 +5,7 @@
 #include <vector>
 #include "model.h"
 
-Model::Model(const char *filename) : verts_(), faces_()
+Model::Model(const char *filename) : verts_(), texcoords_(), normals_(), faces_()
 {
     std::ifstream in;
     in.open(filename, std::ifstream::in);
@@ -20,10 +20,11 @@ Model::Model(const char *filename) : verts_(), faces_()
     {
         std::istringstream iss(line);
         char trash;
+        std::string prefix;
 
         // 接下来我们要分析提取 line 里面的数据
         // 解析顶点坐标：以 "v " 开头
-        if (!line.compare(0, 2, "v "))
+        if (line.compare(0, 2, "v ") == 0)
         {
             iss >> trash; // 吃掉字符 'v'
             vec3 v;
@@ -31,39 +32,93 @@ Model::Model(const char *filename) : verts_(), faces_()
             verts_.push_back(v);      // 存入顶点仓库
         }
 
-        else if (!line.compare(0, 2, "f "))
+        else if (line.compare(0, 3, "vt ") == 0)
         {
-            std::vector<int> f;
-            int idx, itrash;
+            iss >> prefix;
+            vec2 vt;
+            iss >> vt.x >> vt.y;
+            texcoords_.push_back(vt);
+        }
+
+        else if (line.compare(0, 3, "vn ") == 0)
+        {
+            iss >> prefix;
+            vec3 vn;
+            iss >> vn.x >> vn.y >> vn.z;
+            normals_.push_back(vn);
+        }
+
+        else if (line.compare(0, 2, "f ") == 0)
+        {
+            FaceVertex f;
+            Face facet;
+            int vert_idx, uv_idx, normal_idx;
             iss >> trash; // 吃掉 ‘f’
 
             // 循环读取每一组 "顶点/纹理/法线" (v/vt/vn)
-            while (iss >> idx >> trash >> itrash >> trash >> itrash)
+            while (iss >> vert_idx >> trash >> uv_idx >> trash >> normal_idx)
             {
-                idx--; // 关键：OBJ文件索引从1开始，C++数组从0开始
-                f.push_back(idx);
+                f.vertex_index = vert_idx - 1;
+                f.texcoord_index = uv_idx - 1;
+                f.normal_index = normal_idx - 1;
+
+                facet.push_back(f);
             }
-            faces_.push_back(f);
+            if (facet.size() >= 3)
+                faces_.push_back(facet);
         }
     }
     // 读取完毕后打印一下结果，确保我们成功了
-    std::cerr << "# v# " << verts_.size() << " f# " << faces_.size() << std::endl;
+    std::cerr
+        << "# vertices: " << verts_.size()
+        << " # texcoords: " << texcoords_.size()
+        << " # normals: " << normals_.size()
+        << " # faces: " << faces_.size()
+        << '\n';
 }
 
 // 返回多边形面的总数
-int Model::nfaces()
+int Model::nfaces() const
 {
     return faces_.size();
 }
 
 // 返回第i个顶点的xyz坐标
-vec3 Model::vert(int i)
+vec3 Model::vert(int index) const
 {
-    return verts_[i];
+    return verts_[index];
+}
+
+vec2 Model::texcoord(int index) const
+{
+    return texcoords_[index];
+}
+
+vec3 Model::normal(int index) const
+{
+    return normals_[index];
 }
 
 // 返回第idx个面的顶点全局索引
-std::vector<int> Model::face(int idx)
+const Face &Model::face(int face_idx) const
 {
-    return faces_[idx];
+    return faces_[face_idx];
+}
+
+vec3 Model::vert(int face_index, int nthvert) const
+{
+    const FaceVertex &fv = faces_[face_index][nthvert];
+    return verts_[fv.vertex_index];
+}
+
+vec2 Model::texcoord(int face_index, int nthvert) const
+{
+    const FaceVertex &fv = faces_[face_index][nthvert];
+    return texcoords_[fv.vertex_index];
+}
+
+vec3 Model::normal(int face_index, int nthvert) const
+{
+    const FaceVertex &fv = faces_[face_index][nthvert];
+    return normals_[fv.vertex_index];
 }
