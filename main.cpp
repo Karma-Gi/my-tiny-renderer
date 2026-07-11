@@ -1,6 +1,8 @@
 #include <cstdlib>
+#include <cstdint>
 #include "our_gl.h"
 #include "model.h"
+#include <algorithm>
 
 extern std::vector<double> zbuffer; // the depth buffer
 
@@ -30,9 +32,26 @@ struct RandomShader : IShader
 struct PhongShader : IShader
 {
     Model &model;
-    TGAColor color = {};
+    vec3 light_dir;
 
-    PhongShader(Model &m) : model(m) {}
+    vec3 varying_normal[3];
+    vec3 varying_position[3];
+    vec2 varying_uv[3];
+
+    PhongShader(Model &m, const vec3 &light_dir_world) : model(m)
+    {
+        // 光线是方向，w 必须是 0，不受平移影响
+        const vec4 light4 =
+            ModelView *
+            vec4{
+                light_dir_world.x,
+                light_dir_world.y,
+                light_dir_world.z,
+                0.0};
+
+        light_dir = normalized(
+            vec3{light4.x, light4.y, light4.z});
+    }
 
     vec4 vertex(const int face, const int vert)
     {
@@ -41,20 +60,59 @@ struct PhongShader : IShader
         const vec3 normal = model.normal(face, vert);
         const vec2 uv = model.texcoord(face, vert);
 
-        const vec4 gl_Position = ModelView * vec4{position.x, position.y, position.z, 1.};
+        const vec4 eye_position =
+            ModelView *
+            vec4{position.x, position.y, position.z, 1.};
+        varying_position[vert] = {
+            eye_position.x,
+            eye_position.y,
+            eye_position.z};
 
-        return Perspective * gl_Position; // in clip coordinates
+        const vec4 eye_normal =
+            ModelView *
+            vec4{normal.x, normal.y, normal.z, 0.};
+        varying_normal[vert] = {
+            eye_normal.x,
+            eye_normal.y,
+            eye_normal.z};
+
+        return Perspective * eye_position; // in clip coordinates
     }
 
     std::pair<bool, TGAColor> fragment(const vec3 bar) const override
     {
+        // 插值观察空间位置
+        const vec3 position =
+            varying_position[0] * bar.x +
+            varying_position[1] * bar.y +
+            varying_position[2] * bar.z;
+
+        // 插值并重新归一化法线
+        const vec3 n = normalized(
+            varying_normal[0] * bar.x +
+            varying_normal[1] * bar.y +
+            varying_normal[2] * bar.z);
+
+        // Light direction in clip coordinates
+        const vec3 light = normalized(light_dir);
+
         // Ambient light
+        const double ambient = 0.15;
 
         // Diffuse Reflection
+        const double diffuse = std::max(0., dot(light, n));
 
         // Specular Reflection
+        const double e = 32.;
+        const vec3 view_dir = normalized(-1. * position);
+        const vec3 reflect_dir = 2. * n * dot(n, light) - light;
+        const double specular = std::pow(std::max(0., dot(view_dir, reflect_dir)), e);
 
-        return {false, color}; // do not discard the pixel
+        const double intensity = ambient + diffuse + specular;
+
+        const std::uint8_t value = static_cast<std::uint8_t>(std::clamp(intensity, 0., 1.) * 255.);
+        TGAColor fragment_color = {value, value, value, 255};
+        return {false, fragment_color}; // do not discard the pixel
     }
 };
 
@@ -66,6 +124,7 @@ int main(int argc, char **argv)
     const vec3 eye{-1, 0, 2};   // camera position
     const vec3 center{0, 0, 0}; // camera direction
     const vec3 up{0, 1, 0};     // camera up vector
+    const vec3 light_dir_world = normalized(vec3{1, 1, 1});
 
     lookat(eye, center, up);
     init_perspective(norm(eye - center));
@@ -88,15 +147,16 @@ int main(int argc, char **argv)
     {
         std::cout << "Loading model: " << filename << std::endl;
         Model model(filename);
-        RandomShader shader(model);
+        // RandomShader shader(model);
+        PhongShader shader(model, light_dir_world);
 
         for (int idx = 0; idx < model.nfaces(); idx++)
         {
-            shader.color = {
-                static_cast<std::uint8_t>(std::rand() % 255),
-                static_cast<std::uint8_t>(std::rand() % 255),
-                static_cast<std::uint8_t>(std::rand() % 255),
-                255};
+            // shader.color = {
+            //     static_cast<std::uint8_t>(std::rand() % 255),
+            //     static_cast<std::uint8_t>(std::rand() % 255),
+            //     static_cast<std::uint8_t>(std::rand() % 255),
+            //     255};
 
             Triangle clip = {
                 shader.vertex(idx, 0),
