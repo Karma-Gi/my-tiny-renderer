@@ -33,13 +33,14 @@ struct PhongShader : IShader
 {
     Model &model;
     vec3 light_dir;
+    vec3 camera_position_eye;
     mat<3, 3> normal_matrix;
 
     vec3 varying_normal[3];
     vec3 varying_position[3];
     vec2 varying_uv[3];
 
-    PhongShader(Model &m, const vec3 &light_dir_world) : model(m)
+    PhongShader(Model &m, const vec3 &light_dir_world, const vec3 &camera_position_world) : model(m)
     {
         const mat<3, 3> linear_modelview = {{{ModelView[0][0],
                                               ModelView[0][1],
@@ -54,6 +55,19 @@ struct PhongShader : IShader
         // 法线矩阵：ModelView 线性部分的逆转置
         normal_matrix =
             linear_modelview.invert().transpose();
+
+        const vec4 camera4 =
+            ModelView *
+            vec4{
+                camera_position_world.x,
+                camera_position_world.y,
+                camera_position_world.z,
+                1.0};
+
+        camera_position_eye = {
+            camera4.x,
+            camera4.y,
+            camera4.z};
 
         // 光线是方向，w 必须是 0，不受平移影响
         const vec4 light4 =
@@ -113,21 +127,25 @@ struct PhongShader : IShader
         const vec3 light = normalized(light_dir);
 
         // Ambient light
-        const double ambient = 0.15;
+        const double ambient = 0.3;
 
         // Diffuse Reflection
         const double diffuse = std::max(0., dot(light, n));
 
         // Specular Reflection
-        const double e = 32.;
-        const vec3 view_dir = normalized(-1. * position);
+        const double e = 35;
+        const vec3 view_dir = normalized(camera_position_eye - position);
         const vec3 reflect_dir = 2. * n * dot(n, light) - light;
         const double specular = std::pow(std::max(0., dot(view_dir, reflect_dir)), e);
+        // const double specular = std::pow(std::max(reflect_dir.z, 0.), 35);
 
-        const double intensity = ambient + diffuse + specular;
+        const double intensity = ambient + .4 * diffuse + .9 * specular;
 
-        const std::uint8_t value = static_cast<std::uint8_t>(std::clamp(intensity, 0., 1.) * 255.);
-        TGAColor fragment_color = {value, value, value, 255};
+        // const std::uint8_t value = static_cast<std::uint8_t>(std::clamp(intensity, 0., 1.) * 255.);
+        TGAColor fragment_color = {255, 255, 255, 255};
+        // TGAColor fragment_color = {value, value, value, 255};
+        for (int channel : {0, 1, 2})
+            fragment_color[channel] *= std::min(1., intensity);
         return {false, fragment_color}; // do not discard the pixel
     }
 };
@@ -164,7 +182,7 @@ int main(int argc, char **argv)
         std::cout << "Loading model: " << filename << std::endl;
         Model model(filename);
         // RandomShader shader(model);
-        PhongShader shader(model, light_dir_world);
+        PhongShader shader(model, light_dir_world, eye);
 
         for (int idx = 0; idx < model.nfaces(); idx++)
         {
