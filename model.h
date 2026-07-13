@@ -2,6 +2,7 @@
 #pragma once // 防止头文件被重复包含
 #include <vector>
 #include "geometry.h"
+#include "tgaimage.h"
 
 struct FaceVertex
 {
@@ -23,6 +24,10 @@ private:
     // 每个面由若干 FaceVertex 组成
     std::vector<Face> faces_;
 
+    // TGA for normal mapping
+    TGAImage normalmap_;
+    bool normalmap_loaded_ = false;
+
 public:
     explicit Model(const char *filename); // 构造函数必须是 public，允许外部实例化
 
@@ -43,4 +48,8 @@ public:
     vec3 vert(int face_index, int nthvert) const;
     vec2 texcoord(int face_index, int nthvert) const;
     vec3 normal(int face_index, int nthvert) const;
+
+    bool has_normalmap() const;
+    // 根据 UV 从 _nm.tga 中采样模型空间法线
+    vec3 normal_from_map(const vec2 uv) const;
 };

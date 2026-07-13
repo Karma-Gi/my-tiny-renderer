@@ -3,9 +3,13 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <algorithm>
+#include <cassert>
+#include <filesystem>
+
 #include "model.h"
 
-Model::Model(const char *filename) : verts_(), texcoords_(), normals_(), faces_()
+Model::Model(const char *filename) : verts_(), texcoords_(), normals_(), faces_(), normalmap_(), normalmap_loaded_(false)
 {
     std::ifstream in;
     in.open(filename, std::ifstream::in);
@@ -13,6 +17,37 @@ Model::Model(const char *filename) : verts_(), texcoords_(), normals_(), faces_(
     {
         std::cerr << "Fail to open " << filename << std::endl;
         return;
+    }
+
+    namespace fs = std::filesystem;
+
+    const fs::path obj_path(filename);
+
+    const fs::path normalmap_path =
+        obj_path.parent_path() /
+        (obj_path.stem().string() + "_nm.tga");
+
+    normalmap_loaded_ =
+        normalmap_.read_tga_file(
+            normalmap_path.string());
+
+    if (normalmap_loaded_)
+    {
+        std::cerr
+            << "Loaded normal map: "
+            << normalmap_path.string()
+            << " ("
+            << normalmap_.width()
+            << "x"
+            << normalmap_.height()
+            << ")\n";
+    }
+    else
+    {
+        std::cerr
+            << "Warning: failed to load normal map: "
+            << normalmap_path.string()
+            << '\n';
     }
 
     std::string line;
@@ -121,4 +156,41 @@ vec3 Model::normal(int face_index, int nthvert) const
 {
     const FaceVertex &fv = faces_[face_index][nthvert];
     return normals_[fv.normal_index];
+}
+
+bool Model::has_normalmap() const
+{
+    return normalmap_loaded_;
+}
+
+vec3 Model::normal_from_map(vec2 uv) const
+{
+    assert(normalmap_loaded_);
+    assert(normalmap_.width() > 0);
+    assert(normalmap_.height() > 0);
+
+    // 防止 UV 因浮点误差稍微超出 [0,1]
+    uv.x = std::clamp(uv.x, 0.0, 1.0);
+    uv.y = std::clamp(uv.y, 0.0, 1.0);
+
+    const int x = std::clamp(
+        static_cast<int>(
+            uv.x * (normalmap_.width() - 1)),
+        0,
+        normalmap_.width() - 1);
+
+    const int y = std::clamp(
+        static_cast<int>(
+            (1. - uv.y) * (normalmap_.height() - 1)),
+        0,
+        normalmap_.height() - 1);
+
+    const TGAColor color =
+        normalmap_.get(x, y);
+
+    // TGAColor 的存储顺序是 BGRA
+    const double nx = 2. * color.bgra[2] / 255. - 1.;
+    const double ny = 2. * color.bgra[1] / 255. - 1.;
+    const double nz = 2. * color.bgra[0] / 255. - 1.;
+    return normalized(vec3{nx, ny, nz});
 }

@@ -3,6 +3,9 @@
 #include <fstream>
 #include <vector>
 
+#include "tgaimage.h"
+#include "geometry.h"
+
 #pragma pack(push, 1)
 struct TGAHeader
 {

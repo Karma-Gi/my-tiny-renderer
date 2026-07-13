@@ -106,6 +106,10 @@ struct PhongShader : IShader
             eye_normal.y,
             eye_normal.z};
 
+        varying_uv[vert] = {
+            uv.x,
+            uv.y};
+
         return Perspective * eye_position; // in clip coordinates
     }
 
@@ -123,6 +127,12 @@ struct PhongShader : IShader
             varying_normal[1] * bar.y +
             varying_normal[2] * bar.z);
 
+        const vec2 uv = varying_uv[0] * bar.x +
+                        varying_uv[1] * bar.y +
+                        varying_uv[2] * bar.z;
+
+        const vec3 uv_mapped_n = model.normal_from_map(uv);
+
         // Light direction in clip coordinates
         const vec3 light = normalized(light_dir);
 
@@ -130,12 +140,12 @@ struct PhongShader : IShader
         const double ambient = 0.3;
 
         // Diffuse Reflection
-        const double diffuse = std::max(0., dot(light, n));
+        const double diffuse = std::max(0., dot(light, uv_mapped_n));
 
         // Specular Reflection
         const double e = 35;
         const vec3 view_dir = normalized(camera_position_eye - position);
-        const vec3 reflect_dir = 2. * n * dot(n, light) - light;
+        const vec3 reflect_dir = 2. * uv_mapped_n * dot(uv_mapped_n, light) - light;
         const double specular = std::pow(std::max(0., dot(view_dir, reflect_dir)), e);
         // const double specular = std::pow(std::max(reflect_dir.z, 0.), 35);
 
