@@ -33,6 +33,7 @@ struct PhongShader : IShader
 {
     Model &model;
     vec3 light_dir;
+    mat<3, 3> normal_matrix;
 
     vec3 varying_normal[3];
     vec3 varying_position[3];
@@ -40,6 +41,20 @@ struct PhongShader : IShader
 
     PhongShader(Model &m, const vec3 &light_dir_world) : model(m)
     {
+        const mat<3, 3> linear_modelview = {{{ModelView[0][0],
+                                              ModelView[0][1],
+                                              ModelView[0][2]},
+                                             {ModelView[1][0],
+                                              ModelView[1][1],
+                                              ModelView[1][2]},
+                                             {ModelView[2][0],
+                                              ModelView[2][1],
+                                              ModelView[2][2]}}};
+
+        // 法线矩阵：ModelView 线性部分的逆转置
+        normal_matrix =
+            linear_modelview.invert().transpose();
+
         // 光线是方向，w 必须是 0，不受平移影响
         const vec4 light4 =
             ModelView *
@@ -68,9 +83,10 @@ struct PhongShader : IShader
             eye_position.y,
             eye_position.z};
 
-        const vec4 eye_normal =
-            ModelView *
-            vec4{normal.x, normal.y, normal.z, 0.};
+        // const vec4 eye_normal =
+        //     ModelView *
+        //     vec4{normal.x, normal.y, normal.z, 0.};
+        const vec3 eye_normal = normal_matrix * normal;
         varying_normal[vert] = {
             eye_normal.x,
             eye_normal.y,

@@ -114,11 +114,11 @@ vec3 Model::vert(int face_index, int nthvert) const
 vec2 Model::texcoord(int face_index, int nthvert) const
 {
     const FaceVertex &fv = faces_[face_index][nthvert];
-    return texcoords_[fv.vertex_index];
+    return texcoords_[fv.texcoord_index];
 }
 
 vec3 Model::normal(int face_index, int nthvert) const
 {
     const FaceVertex &fv = faces_[face_index][nthvert];
-    return normals_[fv.vertex_index];
+    return normals_[fv.normal_index];
 }
