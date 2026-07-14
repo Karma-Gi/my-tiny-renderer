@@ -133,6 +133,21 @@ struct PhongShader : IShader
 
         const vec3 uv_mapped_n = model.normal_from_map(uv);
 
+        vec3 shading_normal = n;
+
+        if (model.has_normalmap())
+        {
+            const vec3 model_normal =
+                model.normal_from_map(uv);
+
+            shading_normal = normalized(
+                normal_matrix * model_normal);
+        }
+
+        // 采样颜色和镜面权重
+        const TGAColor diffuse_color = model.diffuse_from_map(uv);
+        const double specular_weight = model.specular_from_map(uv);
+
         // Light direction in clip coordinates
         const vec3 light = normalized(light_dir);
 
@@ -140,22 +155,43 @@ struct PhongShader : IShader
         const double ambient = 0.3;
 
         // Diffuse Reflection
-        const double diffuse = std::max(0., dot(light, uv_mapped_n));
+        const double diffuse = std::max(0., dot(light, shading_normal));
 
         // Specular Reflection
         const double e = 35;
         const vec3 view_dir = normalized(camera_position_eye - position);
-        const vec3 reflect_dir = 2. * uv_mapped_n * dot(uv_mapped_n, light) - light;
-        const double specular = std::pow(std::max(0., dot(view_dir, reflect_dir)), e);
+        const vec3 reflect_dir = 2. * uv_mapped_n * dot(shading_normal, light) - light;
+
+        double specular = 0.0;
+        if (diffuse > 0.0)
+        {
+            specular = std::pow(std::max(0., dot(view_dir, reflect_dir)), e);
+        }
         // const double specular = std::pow(std::max(reflect_dir.z, 0.), 35);
 
-        const double intensity = ambient + .4 * diffuse + .9 * specular;
+        const double intensity =
+            std::min(
+                1.0,
+                ambient +
+                    0.4 * diffuse +
+                    0.9 * specular_weight * specular);
 
         // const std::uint8_t value = static_cast<std::uint8_t>(std::clamp(intensity, 0., 1.) * 255.);
-        TGAColor fragment_color = {255, 255, 255, 255};
+        TGAColor fragment_color = diffuse_color;
         // TGAColor fragment_color = {value, value, value, 255};
         for (int channel : {0, 1, 2})
-            fragment_color[channel] *= std::min(1., intensity);
+        {
+            fragment_color[channel] =
+                static_cast<std::uint8_t>(
+                    std::clamp(
+                        diffuse_color.bgra[channel] *
+                            intensity,
+                        0.0,
+                        255.0));
+        }
+
+        fragment_color.bgra[3] = 255;
+        
         return {false, fragment_color}; // do not discard the pixel
     }
 };

@@ -24,9 +24,19 @@ private:
     // 每个面由若干 FaceVertex 组成
     std::vector<Face> faces_;
 
-    // TGA for normal mapping
+    // .tga for more textures
     TGAImage normalmap_;
+    TGAImage diffusemap_;
+    TGAImage specularmap_;
+
     bool normalmap_loaded_ = false;
+    bool diffusemap_loaded_ = false;
+    bool specularmap_loaded_ = false;
+
+    // 统一处理 UV -> 图片坐标，避免三张纹理各写一遍
+    static TGAColor sample_texture(
+        const TGAImage &texture,
+        vec2 uv);
 
 public:
     explicit Model(const char *filename); // 构造函数必须是 public，允许外部实例化
@@ -52,4 +62,11 @@ public:
     bool has_normalmap() const;
     // 根据 UV 从 _nm.tga 中采样模型空间法线
     vec3 normal_from_map(const vec2 uv) const;
+
+    // 返回纹理颜色；没有纹理时返回白色
+    TGAColor diffuse_from_map(vec2 uv) const;
+
+    // 返回 [0,1] 范围的镜面权重；
+    // 没有纹理时返回 1
+    double specular_from_map(vec2 uv) const;
 };

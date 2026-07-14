@@ -9,7 +9,17 @@
 
 #include "model.h"
 
-Model::Model(const char *filename) : verts_(), texcoords_(), normals_(), faces_(), normalmap_(), normalmap_loaded_(false)
+Model::Model(const char *filename)
+    : verts_(),
+      texcoords_(),
+      normals_(),
+      faces_(),
+      normalmap_(),
+      diffusemap_(),
+      specularmap_(),
+      normalmap_loaded_(false),
+      diffusemap_loaded_(false),
+      specularmap_loaded_(false)
 {
     std::ifstream in;
     in.open(filename, std::ifstream::in);
@@ -27,20 +37,38 @@ Model::Model(const char *filename) : verts_(), texcoords_(), normals_(), faces_(
         obj_path.parent_path() /
         (obj_path.stem().string() + "_nm.tga");
 
+    const fs::path diffusemap_path =
+        obj_path.parent_path() /
+        (obj_path.stem().string() + "_diffuse.tga");
+
+    const fs::path specularmap_path =
+        obj_path.parent_path() /
+        (obj_path.stem().string() + "_spec.tga");
+
     normalmap_loaded_ =
         normalmap_.read_tga_file(
             normalmap_path.string());
 
+    diffusemap_loaded_ =
+        diffusemap_.read_tga_file(
+            diffusemap_path.string());
+
+    specularmap_loaded_ =
+        specularmap_.read_tga_file(
+            specularmap_path.string());
+
     if (normalmap_loaded_)
     {
         std::cerr
-            << "Loaded normal map: "
-            << normalmap_path.string()
-            << " ("
-            << normalmap_.width()
-            << "x"
-            << normalmap_.height()
-            << ")\n";
+            << "normal map: "
+            << (normalmap_loaded_ ? "loaded" : "missing")
+            << '\n'
+            << "diffuse map: "
+            << (diffusemap_loaded_ ? "loaded" : "missing")
+            << '\n'
+            << "specular map: "
+            << (specularmap_loaded_ ? "loaded" : "missing")
+            << '\n';
     }
     else
     {
@@ -163,34 +191,56 @@ bool Model::has_normalmap() const
     return normalmap_loaded_;
 }
 
+TGAColor Model::sample_texture(const TGAImage &texture, vec2 uv)
+{
+    assert(texture.width() > 0);
+    assert(texture.height() > 0);
+
+    uv.x = std::clamp(uv.x, 0.0, 1.0);
+    uv.y = std::clamp(uv.y, 0.0, 1.0);
+
+    const int x = std::clamp(
+        static_cast<int>(
+            uv.x * (texture.width() - 1)),
+        0,
+        texture.width() - 1);
+
+    const int y = std::clamp(
+        static_cast<int>(
+            (1. - uv.y) * (texture.height() - 1)),
+        0,
+        texture.height() - 1);
+
+    return texture.get(x, y);
+}
+
 vec3 Model::normal_from_map(vec2 uv) const
 {
     assert(normalmap_loaded_);
     assert(normalmap_.width() > 0);
     assert(normalmap_.height() > 0);
 
-    // 防止 UV 因浮点误差稍微超出 [0,1]
-    uv.x = std::clamp(uv.x, 0.0, 1.0);
-    uv.y = std::clamp(uv.y, 0.0, 1.0);
-
-    const int x = std::clamp(
-        static_cast<int>(
-            uv.x * (normalmap_.width() - 1)),
-        0,
-        normalmap_.width() - 1);
-
-    const int y = std::clamp(
-        static_cast<int>(
-            (1. - uv.y) * (normalmap_.height() - 1)),
-        0,
-        normalmap_.height() - 1);
-
-    const TGAColor color =
-        normalmap_.get(x, y);
+    const TGAColor color = sample_texture(normalmap_, uv);
 
     // TGAColor 的存储顺序是 BGRA
     const double nx = 2. * color.bgra[2] / 255. - 1.;
     const double ny = 2. * color.bgra[1] / 255. - 1.;
     const double nz = 2. * color.bgra[0] / 255. - 1.;
     return normalized(vec3{nx, ny, nz});
+}
+
+TGAColor Model::diffuse_from_map(vec2 uv) const
+{
+    assert(diffusemap_loaded_);
+    assert(diffusemap_.width() > 0);
+    assert(diffusemap_.height() > 0);
+    return sample_texture(diffusemap_, uv);
+}
+
+double Model::specular_from_map(vec2 uv) const
+{
+    assert(specularmap_loaded_);
+    assert(specularmap_.width() > 0);
+    assert(specularmap_.height() > 0);
+    return sample_texture(specularmap_, uv)[0] / 255.;
 }
