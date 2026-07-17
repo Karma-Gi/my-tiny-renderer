@@ -92,7 +92,7 @@ void rasterize(const Triangle &clip, const IShader &shader, TGAImage &framebuffe
             if (zbuffer[idx] >= z)
                 continue; // discard fragments that are too deep w.r.t the z-buffer
 
-            auto [discard, color] = shader.fragment(bc_corrected);
+            auto [discard, color] = shader.fragment(bc_corrected, x, y);
             if (discard)
                 continue;                 // fragment shader can discard current fragment
             zbuffer[idx] = z;             // update the z-buffer

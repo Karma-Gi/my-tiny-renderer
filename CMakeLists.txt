@@ -23,6 +23,7 @@ find_package(OpenMP COMPONENTS CXX)
 
 set(SOURCES
   main.cpp
+  shaders.cpp
   our_gl.cpp
   tgaimage.cpp
   model.cpp

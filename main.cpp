@@ -2,257 +2,25 @@
 #include <cstdint>
 #include "our_gl.h"
 #include "model.h"
+#include "shaders.h"
 #include <algorithm>
+#include <memory>
 
 extern std::vector<double> zbuffer; // the depth buffer
 
-struct BlankShader : IShader
-{
-    const Model &model;
-
-    BlankShader(const Model &m) : model(m) {}
-
-    virtual vec4 vertex(const int face, const int vert)
-    {
-        vec3 v = model.vert(face, vert);
-        vec4 gl_Position = ModelView * vec4{v.x, v.y, v.z, 1.};
-        return Perspective * gl_Position;
-    }
-
-    virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const
-    {
-        return {false, {255, 255, 255, 255}};
-    }
-};
-
-struct PhongShader : IShader
-{
-    Model &model;
-    vec3 light_position_eye;
-    vec3 camera_position_eye;
-    mat<3, 3> normal_matrix;
-
-    vec3 varying_normal[3];
-    vec3 varying_position[3];
-    vec2 varying_uv[3];
-
-    vec3 triangle_tangent;
-    vec3 triangle_bitangent;
-    bool triangle_tbn_valid;
-
-    PhongShader(Model &m, const vec3 &light_position_world, const vec3 &camera_position_world) : model(m)
-    {
-        const mat<3, 3> linear_modelview = {{{ModelView[0][0],
-                                              ModelView[0][1],
-                                              ModelView[0][2]},
-                                             {ModelView[1][0],
-                                              ModelView[1][1],
-                                              ModelView[1][2]},
-                                             {ModelView[2][0],
-                                              ModelView[2][1],
-                                              ModelView[2][2]}}};
-
-        // 法线矩阵：ModelView 线性部分的逆转置
-        normal_matrix =
-            linear_modelview.invert().transpose();
-
-        const vec4 camera4 =
-            ModelView *
-            vec4{
-                camera_position_world.x,
-                camera_position_world.y,
-                camera_position_world.z,
-                1.0};
-
-        camera_position_eye = {
-            camera4.x,
-            camera4.y,
-            camera4.z};
-
-        // 方向光：光线是方向，w 必须是 0，不受平移影响
-        // const vec4 light4 =
-        //     ModelView *
-        //     vec4{
-        //         light_dir_world.x,
-        //         light_dir_world.y,
-        //         light_dir_world.z,
-        //         0.0};
-
-        // light_dir = normalized(
-        //     vec3{light4.x, light4.y, light4.z});
-
-        // 点光源
-        const vec4 light4 =
-            ModelView *
-            vec4{
-                light_position_world.x,
-                light_position_world.y,
-                light_position_world.z,
-                1.0}; // 点的位置，w 必须是 1
-
-        light_position_eye = {
-            light4.x,
-            light4.y,
-            light4.z};
-    }
-
-    vec4 vertex(const int face, const int vert)
-    {
-        // 先取得当前面的三个全局顶点索引
-        const vec3 position = model.vert(face, vert); // current vertex in object coordinate
-        const vec3 normal = model.normal(face, vert);
-        const vec2 uv = model.texcoord(face, vert);
-
-        const vec4 eye_position =
-            ModelView *
-            vec4{position.x, position.y, position.z, 1.};
-        varying_position[vert] = {
-            eye_position.x,
-            eye_position.y,
-            eye_position.z};
-
-        // const vec4 eye_normal =
-        //     ModelView *
-        //     vec4{normal.x, normal.y, normal.z, 0.};
-        const vec3 eye_normal = normal_matrix * normal;
-        varying_normal[vert] = {
-            eye_normal.x,
-            eye_normal.y,
-            eye_normal.z};
-
-        varying_uv[vert] = {
-            uv.x,
-            uv.y};
-
-        // 计算TBN矩阵中所需的tangent和bitangent
-        if (vert == 2)
-        {
-            const vec3 e0 = varying_position[1] - varying_position[0];
-            const vec3 e1 = varying_position[2] - varying_position[0];
-            const vec2 duv0 = varying_uv[1] - varying_uv[0];
-            const vec2 duv1 = varying_uv[2] - varying_uv[0];
-
-            const double det =
-                duv0.x * duv1.y -
-                duv1.x * duv0.y;
-
-            triangle_tbn_valid = std::abs(det) > 1e-12;
-
-            if (triangle_tbn_valid)
-            {
-
-                const mat<3, 2> E = {{{e0.x, e1.x}, {e0.y, e1.y}, {e0.z, e1.z}}};
-                const mat<2, 2> U = {{{duv0.x, duv1.x}, {duv0.y, duv1.y}}};
-
-                mat<3, 2> TB = E * U.invert();
-                triangle_tangent = normalized(vec3{TB[0][0], TB[1][0], TB[2][0]});
-                triangle_bitangent = normalized(vec3{TB[0][1], TB[1][1], TB[2][1]});
-            }
-        }
-
-        return Perspective * eye_position; // in clip coordinates
-    }
-
-    std::pair<bool, TGAColor> fragment(const vec3 bar) const override
-    {
-        // 插值观察空间位置
-        const vec3 position =
-            varying_position[0] * bar.x +
-            varying_position[1] * bar.y +
-            varying_position[2] * bar.z;
-
-        // 插值并重新归一化法线
-        const vec3 N = normalized(
-            varying_normal[0] * bar.x +
-            varying_normal[1] * bar.y +
-            varying_normal[2] * bar.z);
-
-        const vec2 uv = varying_uv[0] * bar.x +
-                        varying_uv[1] * bar.y +
-                        varying_uv[2] * bar.z;
-
-        vec3 T = normalized(triangle_tangent - N * dot(N, triangle_tangent));
-        double handedness = dot(cross(triangle_tangent, triangle_bitangent), N) < 0. ? -1. : 1.;
-        vec3 B = normalized(cross(N, T)) * handedness;
-
-        mat<3, 3> TBN = {{{T.x, B.x, N.x}, {T.y, B.y, N.y}, {T.z, B.z, N.z}}};
-
-        const vec3 uv_mapped_n = model.normal_from_map(uv); // tangent normal
-
-        vec3 shading_normal = normalized(TBN * uv_mapped_n);
-
-        if (model.has_normalmap() && triangle_tbn_valid)
-        {
-            const vec3 tangent_normal =
-                model.normal_from_map(uv);
-
-            shading_normal = normalized(
-                TBN * tangent_normal);
-        }
-
-        // 采样颜色和镜面权重
-        const TGAColor diffuse_color = model.diffuse_from_map(uv);
-        const double specular_weight = model.specular_from_map(uv);
-
-        // 方向光：Light direction in clip coordinates
-        // const vec3 light = normalized(light_dir);
-
-        // 点光源：position 和 light_position_eye 都位于观察空间
-        const vec3 to_light = light_position_eye - position;
-        const double light_distance = norm(to_light);
-        const vec3 light = normalized(to_light);
-
-        // Ambient light
-        const double ambient = 0.4;
-
-        // Diffuse Reflection
-        const double diffuse = std::max(0., dot(light, shading_normal));
-
-        // Specular Reflection
-        const double e = 35;
-        const vec3 view_dir = normalized(camera_position_eye - position);
-        const vec3 reflect_dir = 2. * shading_normal * dot(shading_normal, light) - light;
-
-        double specular = 0.0;
-        if (diffuse > 0.0)
-        {
-            specular = std::pow(std::max(0., dot(view_dir, reflect_dir)), e);
-        }
-
-        // 点光源距离衰减
-        const double distance_squared = dot(to_light, to_light);
-        const double attenuation = 1.0 / (1.0 + 0.1 * light_distance + 0.03 * distance_squared);
-
-        const double intensity = std::min(1.0, ambient + attenuation * (1. * diffuse + 3. * specular_weight * specular));
-
-        TGAColor fragment_color = diffuse_color;
-        for (int channel : {0, 1, 2})
-        {
-            fragment_color[channel] =
-                static_cast<std::uint8_t>(
-                    std::clamp(
-                        diffuse_color.bgra[channel] *
-                            intensity,
-                        0.0,
-                        255.0));
-        }
-
-        fragment_color.bgra[3] = 255;
-
-        return {false, fragment_color}; // do not discard the pixel
-    }
-};
-
-void post_processing_shadow(TGAImage &framebuffer,
-                            const std::vector<double> &camera_zbuffer,
-                            const std::vector<double> &shadowbuffer,
-                            const mat<4, 4> &camera_screen_to_world,
-                            const mat<4, 4> &world_to_shadow_screen,
-                            const int width,
-                            const int height)
+void accumulate_ao(
+    std::vector<double> &ao_visible,
+    std::vector<double> &ao_samples,
+    const std::vector<double> &camera_zbuffer,
+    const std::vector<double> &shadowbuffer,
+    const TGAImage &normalbuffer,
+    const mat<4, 4> &camera_screen_to_world,
+    const mat<4, 4> &world_to_shadow_screen,
+    const vec3 &sample_eye,
+    const int width,
+    const int height)
 {
     constexpr double bias = 0.005;
-    constexpr double visibility = 0.3;
 
     for (int y = 0; y < height; y++)
     {
@@ -267,6 +35,35 @@ void post_processing_shadow(TGAImage &framebuffer,
 
             // 相机屏幕空间 -> 世界空间齐次坐标
             vec4 world_h = camera_screen_to_world * vec4{static_cast<double>(x), static_cast<double>(y), camera_z, 1.};
+            if (std::abs(world_h.w) < 1e-12)
+                continue;
+
+            vec3 world_position{world_h.x / world_h.w, world_h.y / world_h.w, world_h.z / world_h.w};
+
+            // 解码 normalbuffer：[0, 255] -> [-1, 1]
+            const TGAColor encoded_normal =
+                normalbuffer.get(x, y);
+
+            vec3 world_normal{
+                encoded_normal.bgra[0] / 255.0 * 2.0 - 1.0,
+                encoded_normal.bgra[1] / 255.0 * 2.0 - 1.0,
+                encoded_normal.bgra[2] / 255.0 * 2.0 - 1.0};
+
+            if (norm(world_normal) < 1e-12)
+                continue;
+
+            world_normal = normalized(world_normal);
+
+            const vec3 omega =
+                normalized(sample_eye - world_position);
+
+            // 当前采样相机位于表面的背面，不属于该点的正面半球
+            const double weight =
+                std::max(0.0, dot(world_normal, omega));
+
+            if (weight <= 0.0)
+                continue;
+
             // 世界空间 -> 屏幕坐标
             vec4 shadow_h = world_to_shadow_screen * world_h;
 
@@ -287,15 +84,10 @@ void post_processing_shadow(TGAImage &framebuffer,
             double closest_light_z = shadowbuffer[shadow_idx];
 
             bool inshadow = current_light_z < closest_light_z - bias; // 避免自遮挡
-            if (!inshadow)
-                continue;
+            ao_samples[camera_idx] += weight;
 
-            TGAColor color = framebuffer.get(x, y);
-            for (int channel : {0, 1, 2})
-            {
-                color[channel] = static_cast<std::uint8_t>(color[channel] * visibility);
-            }
-            framebuffer.set(x, y, color);
+            if (!inshadow)
+                ao_visible[camera_idx] += weight;
         }
     }
 }
@@ -329,40 +121,28 @@ int main(int argc, char **argv)
             model_files.push_back(argv[m]);
     }
 
+    // 避免复制模型和纹理
+    std::vector<std::unique_ptr<Model>> models;
+    models.reserve(model_files.size());
+
     for (const char *filename : model_files)
     {
-        std::cout << "Loading model: " << filename << std::endl;
-        Model model(filename);
-        // Pass 1: light pass
+        std::cout
+            << "Loading model: "
+            << filename
+            << std::endl;
 
-        // Pass 2: camera pass
-        PhongShader shader(model, light_position_world, eye);
-
-        for (int idx = 0; idx < model.nfaces(); idx++)
-        {
-            Triangle clip = {
-                shader.vertex(idx, 0),
-                shader.vertex(idx, 1),
-                shader.vertex(idx, 2)};
-
-            rasterize(clip, shader, framebuffer);
-        }
+        models.push_back(
+            std::make_unique<Model>(filename));
     }
 
-    // Shadow mapping as post-pocessing
-    const std::vector<double> camera_zbuffer = zbuffer;
-    const mat<4, 4> camera_screen_to_world = (Viewport * Perspective * ModelView).invert();
+    // Normal Pass
+    TGAImage normalbuffer(width, height, TGAImage::RGB);
 
-    lookat(light_position_world, center, up);
-    init_perspective(norm(light_position_world - center));
-    init_viewport(width / 16., width / 16., width * 7. / 8., height * 7. / 8.);
-    init_zbuffer(width, height);
-    TGAImage shadow_image(width, height, TGAImage::RGB);
-
-    for (const char *filename : model_files)
+    for (const auto &model_ptr : models)
     {
-        Model model(filename);
-        BlankShader shader(model);
+        Model &model = *model_ptr;
+        NormalShader shader(model);
 
         for (int face = 0; face < model.nfaces(); face++)
         {
@@ -371,13 +151,126 @@ int main(int argc, char **argv)
                 shader.vertex(face, 1),
                 shader.vertex(face, 2)};
 
-            rasterize(clip, shader, shadow_image);
+            rasterize(
+                clip,
+                shader,
+            normalbuffer);
         }
     }
 
-    const mat<4, 4> world_to_shadow_screen = Viewport * Perspective * ModelView;
-    const std::vector<double> shadowbuffer = zbuffer;
-    post_processing_shadow(framebuffer, camera_zbuffer, shadowbuffer, camera_screen_to_world, world_to_shadow_screen, width, height);
+    const std::vector<double> camera_zbuffer = zbuffer;
+    const mat<4, 4> camera_screen_to_world =
+        (Viewport * Perspective * ModelView).invert();
+
+    // 环境光遮蔽AO
+    std::vector<double> ao_visible(width * height, 0.0);
+    std::vector<double> ao_samples(width * height, 0.0);
+
+    constexpr int sample_count = 32;
+    constexpr double pi = 3.14159265358979323846;
+    const double golden_angle =
+        pi * (3.0 - std::sqrt(5.0));
+
+    const double sample_radius = 3.0;
+
+    TGAImage shadow_image(width, height, TGAImage::RGB);
+    for (int sample = 0; sample < sample_count; sample++)
+    {
+        double y = 1.0 - 2.0 * (sample + 0.5) / sample_count;
+        double radius_at_y = std::sqrt(std::max(0.0, 1.0 - y * y));
+
+        double phi = golden_angle * sample;
+        vec3 sample_dir = {radius_at_y * std::cos(phi), y, radius_at_y * std::sin(phi)};
+        vec3 sample_eye = center + sample_dir * sample_radius;
+        // 避免观察方向和 up 几乎平行
+        vec3 sample_up = std::abs(sample_dir.y) > 0.99 ? vec3{1, 0, 0} : vec3{0, 1, 0};
+
+        lookat(sample_eye, center, sample_up);
+        init_perspective(norm(sample_eye - center));
+        init_viewport(
+            width / 16.,
+            height / 16.,
+            width * 7. / 8.,
+            height * 7. / 8.);
+        init_zbuffer(width, height);
+
+        for (const auto &model_ptr : models)
+        {
+            Model &model = *model_ptr;
+            BlankShader shader(model);
+
+            for (int face = 0; face < model.nfaces(); face++)
+            {
+                Triangle clip = {
+                    shader.vertex(face, 0),
+                    shader.vertex(face, 1),
+                    shader.vertex(face, 2)};
+
+                rasterize(clip, shader, shadow_image);
+            }
+        }
+
+        const mat<4, 4> world_to_shadow_screen = Viewport * Perspective * ModelView;
+        accumulate_ao(
+            ao_visible,
+            ao_samples,
+            camera_zbuffer,
+            zbuffer,
+            normalbuffer,
+            camera_screen_to_world,
+            world_to_shadow_screen,
+            sample_eye,
+            width,
+            height);
+    }
+
+    std::vector<double> ao_buffer(width * height, 1.0);
+    for (int y = 0; y < height; y++)
+    {
+        for (int x = 0; x < width; x++)
+        {
+            int idx = x + y * width;
+
+            if (camera_zbuffer[idx] < -100.0)
+                continue;
+
+            ao_buffer[idx] = ao_samples[idx] > 0.0
+                                 ? ao_visible[idx] / ao_samples[idx]
+                                 : 1.0;
+        }
+    }
+
+    // AO 已经计算完成，恢复最终观察相机并执行 Phong pass。
+    lookat(eye, center, up);
+    init_perspective(norm(eye - center));
+    init_viewport(
+        width / 16.,
+        height / 16.,
+        width * 7. / 8.,
+        height * 7. / 8.);
+    init_zbuffer(width, height);
+
+    for (const auto &model_ptr : models)
+    {
+        Model &model = *model_ptr;
+        PhongShader shader(
+            model,
+            light_position_world,
+            eye,
+            ao_buffer,
+            width);
+
+        for (int face = 0; face < model.nfaces(); face++)
+        {
+            Triangle clip = {
+                shader.vertex(face, 0),
+                shader.vertex(face, 1),
+                shader.vertex(face, 2)};
+
+            rasterize(clip, shader, framebuffer);
+        }
+    }
+
     framebuffer.write_tga_file("framebuffer.tga");
     return 0;
 }
