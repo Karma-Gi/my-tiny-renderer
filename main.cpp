@@ -32,7 +32,7 @@ struct RandomShader : IShader
 struct PhongShader : IShader
 {
     Model &model;
-    vec3 light_dir;
+    vec3 light_position_eye;
     vec3 camera_position_eye;
     mat<3, 3> normal_matrix;
 
@@ -44,7 +44,7 @@ struct PhongShader : IShader
     vec3 triangle_bitangent;
     bool triangle_tbn_valid;
 
-    PhongShader(Model &m, const vec3 &light_dir_world, const vec3 &camera_position_world) : model(m)
+    PhongShader(Model &m, const vec3 &light_position_world, const vec3 &camera_position_world) : model(m)
     {
         const mat<3, 3> linear_modelview = {{{ModelView[0][0],
                                               ModelView[0][1],
@@ -73,17 +73,31 @@ struct PhongShader : IShader
             camera4.y,
             camera4.z};
 
-        // 光线是方向，w 必须是 0，不受平移影响
+        // 方向光：光线是方向，w 必须是 0，不受平移影响
+        // const vec4 light4 =
+        //     ModelView *
+        //     vec4{
+        //         light_dir_world.x,
+        //         light_dir_world.y,
+        //         light_dir_world.z,
+        //         0.0};
+
+        // light_dir = normalized(
+        //     vec3{light4.x, light4.y, light4.z});
+
+        // 点光源
         const vec4 light4 =
             ModelView *
             vec4{
-                light_dir_world.x,
-                light_dir_world.y,
-                light_dir_world.z,
-                0.0};
+                light_position_world.x,
+                light_position_world.y,
+                light_position_world.z,
+                1.0}; // 点的位置，w 必须是 1
 
-        light_dir = normalized(
-            vec3{light4.x, light4.y, light4.z});
+        light_position_eye = {
+            light4.x,
+            light4.y,
+            light4.z};
     }
 
     vec4 vertex(const int face, const int vert)
@@ -184,8 +198,13 @@ struct PhongShader : IShader
         const TGAColor diffuse_color = model.diffuse_from_map(uv);
         const double specular_weight = model.specular_from_map(uv);
 
-        // Light direction in clip coordinates
-        const vec3 light = normalized(light_dir);
+        // 方向光：Light direction in clip coordinates
+        // const vec3 light = normalized(light_dir);
+
+        // 点光源：position 和 light_position_eye 都位于观察空间
+        const vec3 to_light = light_position_eye - position;
+        const double light_distance = norm(to_light);
+        const vec3 light = normalized(to_light);
 
         // Ambient light
         const double ambient = 0.4;
@@ -203,18 +222,14 @@ struct PhongShader : IShader
         {
             specular = std::pow(std::max(0., dot(view_dir, reflect_dir)), e);
         }
-        // const double specular = std::pow(std::max(reflect_dir.z, 0.), 35);
 
-        const double intensity =
-            std::min(
-                1.0,
-                ambient +
-                    1. * diffuse +
-                    3. * specular_weight * specular);
+        // 点光源距离衰减
+        const double distance_squared = dot(to_light, to_light);
+        const double attenuation = 1.0 / distance_squared;
 
-        // const std::uint8_t value = static_cast<std::uint8_t>(std::clamp(intensity, 0., 1.) * 255.);
+        const double intensity = std::min(1.0, ambient + attenuation * (1. * diffuse + 3. * specular_weight * specular));
+
         TGAColor fragment_color = diffuse_color;
-        // TGAColor fragment_color = {value, value, value, 255};
         for (int channel : {0, 1, 2})
         {
             fragment_color[channel] =
@@ -240,7 +255,9 @@ int main(int argc, char **argv)
     const vec3 eye{-1, 0, 2};   // camera position
     const vec3 center{0, 0, 0}; // camera direction
     const vec3 up{0, 1, 0};     // camera up vector
-    const vec3 light_dir_world = normalized(vec3{1, 1, 1});
+
+    const vec3 light_dir_world = normalized(vec3{1, 1, 1}); // 方向光
+    const vec3 light_position_world{1, 1, 1};               // 点光源
 
     lookat(eye, center, up);
     init_perspective(norm(eye - center));
@@ -264,6 +281,8 @@ int main(int argc, char **argv)
         std::cout << "Loading model: " << filename << std::endl;
         Model model(filename);
         // RandomShader shader(model);
+
+        // Pass 2: camera pass
         PhongShader shader(model, light_dir_world, eye);
 
         for (int idx = 0; idx < model.nfaces(); idx++)
