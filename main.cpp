@@ -40,6 +40,10 @@ struct PhongShader : IShader
     vec3 varying_position[3];
     vec2 varying_uv[3];
 
+    vec3 triangle_tangent;
+    vec3 triangle_bitangent;
+    bool triangle_tbn_valid;
+
     PhongShader(Model &m, const vec3 &light_dir_world, const vec3 &camera_position_world) : model(m)
     {
         const mat<3, 3> linear_modelview = {{{ModelView[0][0],
@@ -110,6 +114,32 @@ struct PhongShader : IShader
             uv.x,
             uv.y};
 
+        // 计算TBN矩阵中所需的tangent和bitangent
+        if (vert == 2)
+        {
+            const vec3 e0 = varying_position[1] - varying_position[0];
+            const vec3 e1 = varying_position[2] - varying_position[0];
+            const vec2 duv0 = varying_uv[1] - varying_uv[0];
+            const vec2 duv1 = varying_uv[2] - varying_uv[0];
+
+            const double det =
+                duv0.x * duv1.y -
+                duv1.x * duv0.y;
+
+            triangle_tbn_valid = std::abs(det) > 1e-12;
+
+            if (triangle_tbn_valid)
+            {
+
+                const mat<3, 2> E = {{{e0.x, e1.x}, {e0.y, e1.y}, {e0.z, e1.z}}};
+                const mat<2, 2> U = {{{duv0.x, duv1.x}, {duv0.y, duv1.y}}};
+
+                mat<3, 2> TB = E * U.invert();
+                triangle_tangent = normalized(vec3{TB[0][0], TB[1][0], TB[2][0]});
+                triangle_bitangent = normalized(vec3{TB[0][1], TB[1][1], TB[2][1]});
+            }
+        }
+
         return Perspective * eye_position; // in clip coordinates
     }
 
@@ -122,7 +152,7 @@ struct PhongShader : IShader
             varying_position[2] * bar.z;
 
         // 插值并重新归一化法线
-        const vec3 n = normalized(
+        const vec3 N = normalized(
             varying_normal[0] * bar.x +
             varying_normal[1] * bar.y +
             varying_normal[2] * bar.z);
@@ -131,17 +161,23 @@ struct PhongShader : IShader
                         varying_uv[1] * bar.y +
                         varying_uv[2] * bar.z;
 
-        const vec3 uv_mapped_n = model.normal_from_map(uv);
+        vec3 T = normalized(triangle_tangent - N * dot(N, triangle_tangent));
+        double handedness = dot(cross(triangle_tangent, triangle_bitangent), N) < 0. ? -1. : 1.;
+        vec3 B = normalized(cross(N, T)) * handedness;
 
-        vec3 shading_normal = n;
+        mat<3, 3> TBN = {{{T.x, B.x, N.x}, {T.y, B.y, N.y}, {T.z, B.z, N.z}}};
 
-        if (model.has_normalmap())
+        const vec3 uv_mapped_n = model.normal_from_map(uv); // tangent normal
+
+        vec3 shading_normal = normalized(TBN * uv_mapped_n);
+
+        if (model.has_normalmap() && triangle_tbn_valid)
         {
-            const vec3 model_normal =
+            const vec3 tangent_normal =
                 model.normal_from_map(uv);
 
             shading_normal = normalized(
-                normal_matrix * model_normal);
+                TBN * tangent_normal);
         }
 
         // 采样颜色和镜面权重
@@ -152,7 +188,7 @@ struct PhongShader : IShader
         const vec3 light = normalized(light_dir);
 
         // Ambient light
-        const double ambient = 0.3;
+        const double ambient = 0.4;
 
         // Diffuse Reflection
         const double diffuse = std::max(0., dot(light, shading_normal));
@@ -160,7 +196,7 @@ struct PhongShader : IShader
         // Specular Reflection
         const double e = 35;
         const vec3 view_dir = normalized(camera_position_eye - position);
-        const vec3 reflect_dir = 2. * uv_mapped_n * dot(shading_normal, light) - light;
+        const vec3 reflect_dir = 2. * shading_normal * dot(shading_normal, light) - light;
 
         double specular = 0.0;
         if (diffuse > 0.0)
@@ -173,8 +209,8 @@ struct PhongShader : IShader
             std::min(
                 1.0,
                 ambient +
-                    0.4 * diffuse +
-                    0.9 * specular_weight * specular);
+                    1. * diffuse +
+                    3. * specular_weight * specular);
 
         // const std::uint8_t value = static_cast<std::uint8_t>(std::clamp(intensity, 0., 1.) * 255.);
         TGAColor fragment_color = diffuse_color;
@@ -191,7 +227,7 @@ struct PhongShader : IShader
         }
 
         fragment_color.bgra[3] = 255;
-        
+
         return {false, fragment_color}; // do not discard the pixel
     }
 };

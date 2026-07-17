@@ -35,7 +35,7 @@ Model::Model(const char *filename)
 
     const fs::path normalmap_path =
         obj_path.parent_path() /
-        (obj_path.stem().string() + "_nm.tga");
+        (obj_path.stem().string() + "_nm_tangent.tga");
 
     const fs::path diffusemap_path =
         obj_path.parent_path() /
