@@ -225,7 +225,7 @@ struct PhongShader : IShader
 
         // 点光源距离衰减
         const double distance_squared = dot(to_light, to_light);
-        const double attenuation = 1.0 / distance_squared;
+        const double attenuation = 1.0 / (1.0 + 0.1 * light_distance + 0.03 * distance_squared);
 
         const double intensity = std::min(1.0, ambient + attenuation * (1. * diffuse + 3. * specular_weight * specular));
 
@@ -256,8 +256,8 @@ int main(int argc, char **argv)
     const vec3 center{0, 0, 0}; // camera direction
     const vec3 up{0, 1, 0};     // camera up vector
 
-    const vec3 light_dir_world = normalized(vec3{1, 1, 1}); // 方向光
-    const vec3 light_position_world{1, 1, 1};               // 点光源
+    // const vec3 light_dir_world = normalized(vec3{1, 1, 1}); // 方向光
+    const vec3 light_position_world{1, 1, 1}; // 点光源
 
     lookat(eye, center, up);
     init_perspective(norm(eye - center));
@@ -283,7 +283,7 @@ int main(int argc, char **argv)
         // RandomShader shader(model);
 
         // Pass 2: camera pass
-        PhongShader shader(model, light_dir_world, eye);
+        PhongShader shader(model, light_position_world, eye);
 
         for (int idx = 0; idx < model.nfaces(); idx++)
         {
