@@ -6,26 +6,22 @@
 
 extern std::vector<double> zbuffer; // the depth buffer
 
-struct RandomShader : IShader
+struct BlankShader : IShader
 {
-    Model &model;
-    TGAColor color = {};
-    vec3 tri[3]; // triangle in eye coordinates
+    const Model &model;
 
-    RandomShader(Model &m) : model(m) {}
+    BlankShader(const Model &m) : model(m) {}
 
-    vec4 vertex(const int face, const int vert)
+    virtual vec4 vertex(const int face, const int vert)
     {
-        // 先取得当前面的三个全局顶点索引
-        const vec3 v = model.vert(face, vert); // current vertex in object coordinates
-        const vec4 gl_Position = ModelView * vec4{v.x, v.y, v.z, 1.};
-        // tri[vert] = gl_Position.xyz();                            // in eye coordinates
-        return Perspective * gl_Position; // in clip coordinates
+        vec3 v = model.vert(face, vert);
+        vec4 gl_Position = ModelView * vec4{v.x, v.y, v.z, 1.};
+        return Perspective * gl_Position;
     }
 
-    std::pair<bool, TGAColor> fragment(const vec3 bar) const override
+    virtual std::pair<bool, TGAColor> fragment(const vec3 bar) const
     {
-        return {false, color}; // do not discard the pixel
+        return {false, {255, 255, 255, 255}};
     }
 };
 
@@ -247,6 +243,63 @@ struct PhongShader : IShader
     }
 };
 
+void post_processing_shadow(TGAImage &framebuffer,
+                            const std::vector<double> &camera_zbuffer,
+                            const std::vector<double> &shadowbuffer,
+                            const mat<4, 4> &camera_screen_to_world,
+                            const mat<4, 4> &world_to_shadow_screen,
+                            const int width,
+                            const int height)
+{
+    constexpr double bias = 0.005;
+    constexpr double visibility = 0.3;
+
+    for (int y = 0; y < height; y++)
+    {
+        for (int x = 0; x < width; x++)
+        {
+            int camera_idx = x + y * width;
+            double camera_z = camera_zbuffer[camera_idx];
+
+            // 没有模型覆盖的背景
+            if (camera_z < -100.)
+                continue;
+
+            // 相机屏幕空间 -> 世界空间齐次坐标
+            vec4 world_h = camera_screen_to_world * vec4{static_cast<double>(x), static_cast<double>(y), camera_z, 1.};
+            // 世界空间 -> 屏幕坐标
+            vec4 shadow_h = world_to_shadow_screen * world_h;
+
+            if (std::abs(shadow_h.w) < 1e-12)
+                continue;
+
+            double shadow_x = shadow_h.x / shadow_h.w;
+            double shadow_y = shadow_h.y / shadow_h.w;
+            double current_light_z = shadow_h.z / shadow_h.w;
+
+            // 不在 shadow map 的投影视锥内
+            if (shadow_x < 0. || shadow_x >= width || shadow_y < 0. || shadow_y >= height)
+                continue;
+
+            int sx = static_cast<int>(shadow_x);
+            int sy = static_cast<int>(shadow_y);
+            int shadow_idx = sx + sy * width;
+            double closest_light_z = shadowbuffer[shadow_idx];
+
+            bool inshadow = current_light_z < closest_light_z - bias; // 避免自遮挡
+            if (!inshadow)
+                continue;
+
+            TGAColor color = framebuffer.get(x, y);
+            for (int channel : {0, 1, 2})
+            {
+                color[channel] = static_cast<std::uint8_t>(color[channel] * visibility);
+            }
+            framebuffer.set(x, y, color);
+        }
+    }
+}
+
 int main(int argc, char **argv)
 
 {
@@ -257,7 +310,7 @@ int main(int argc, char **argv)
     const vec3 up{0, 1, 0};     // camera up vector
 
     // const vec3 light_dir_world = normalized(vec3{1, 1, 1}); // 方向光
-    const vec3 light_position_world{1, 1, 1}; // 点光源
+    const vec3 light_position_world{1, 1, 1}; // spotlight
 
     lookat(eye, center, up);
     init_perspective(norm(eye - center));
@@ -280,19 +333,13 @@ int main(int argc, char **argv)
     {
         std::cout << "Loading model: " << filename << std::endl;
         Model model(filename);
-        // RandomShader shader(model);
+        // Pass 1: light pass
 
         // Pass 2: camera pass
         PhongShader shader(model, light_position_world, eye);
 
         for (int idx = 0; idx < model.nfaces(); idx++)
         {
-            // shader.color = {
-            //     static_cast<std::uint8_t>(std::rand() % 255),
-            //     static_cast<std::uint8_t>(std::rand() % 255),
-            //     static_cast<std::uint8_t>(std::rand() % 255),
-            //     255};
-
             Triangle clip = {
                 shader.vertex(idx, 0),
                 shader.vertex(idx, 1),
@@ -302,6 +349,35 @@ int main(int argc, char **argv)
         }
     }
 
+    // Shadow mapping as post-pocessing
+    const std::vector<double> camera_zbuffer = zbuffer;
+    const mat<4, 4> camera_screen_to_world = (Viewport * Perspective * ModelView).invert();
+
+    lookat(light_position_world, center, up);
+    init_perspective(norm(light_position_world - center));
+    init_viewport(width / 16., width / 16., width * 7. / 8., height * 7. / 8.);
+    init_zbuffer(width, height);
+    TGAImage shadow_image(width, height, TGAImage::RGB);
+
+    for (const char *filename : model_files)
+    {
+        Model model(filename);
+        BlankShader shader(model);
+
+        for (int face = 0; face < model.nfaces(); face++)
+        {
+            Triangle clip = {
+                shader.vertex(face, 0),
+                shader.vertex(face, 1),
+                shader.vertex(face, 2)};
+
+            rasterize(clip, shader, shadow_image);
+        }
+    }
+
+    const mat<4, 4> world_to_shadow_screen = Viewport * Perspective * ModelView;
+    const std::vector<double> shadowbuffer = zbuffer;
+    post_processing_shadow(framebuffer, camera_zbuffer, shadowbuffer, camera_screen_to_world, world_to_shadow_screen, width, height);
     framebuffer.write_tga_file("framebuffer.tga");
     return 0;
 }
