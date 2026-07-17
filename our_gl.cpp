@@ -71,12 +71,20 @@ void rasterize(const Triangle &clip, const IShader &shader, TGAImage &framebuffe
     {
         for (int y = bbmin_y; y <= bbmax_y; y++)
         {
-            vec3 bc = ABC.invert() * vec3{static_cast<double>(x), static_cast<double>(y), 1.}; // barycentric coordinates of {x,y} w.r.t the triangle
-            double alpha = bc[0];
-            double beta = bc[1];
-            double gamma = bc[2];
+            vec3 bc_screen = ABC.invert() * vec3{static_cast<double>(x), static_cast<double>(y), 1.}; // barycentric coordinates of {x,y} w.r.t the triangle
+            double alpha = bc_screen[0];
+            double beta = bc_screen[1];
+            double gamma = bc_screen[2];
             if (alpha < 0 || beta < 0 || gamma < 0)
                 continue; // negative barycentric coordinate => the pixel is outside the triangle
+
+            // 透视校正
+            vec3 bc_corrected = {alpha / clip[0].w, beta / clip[1].w, gamma / clip[2].w};
+            double weight_sum = bc_corrected.x + bc_corrected.y + bc_corrected.z;
+            if (std::abs(weight_sum) < 1e-12)
+                continue;
+
+            bc_corrected = bc_corrected / weight_sum;
 
             double z = alpha * ndc[0].z + beta * ndc[1].z + gamma * ndc[2].z; // linear interpolation of the depth
             int idx = x + y * width;
@@ -84,7 +92,7 @@ void rasterize(const Triangle &clip, const IShader &shader, TGAImage &framebuffe
             if (zbuffer[idx] >= z)
                 continue; // discard fragments that are too deep w.r.t the z-buffer
 
-            auto [discard, color] = shader.fragment(bc);
+            auto [discard, color] = shader.fragment(bc_corrected);
             if (discard)
                 continue;                 // fragment shader can discard current fragment
             zbuffer[idx] = z;             // update the z-buffer
