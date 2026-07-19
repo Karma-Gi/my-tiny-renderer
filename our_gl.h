@@ -1,3 +1,5 @@
+#pragma once
+
 #include "tgaimage.h"
 #include "geometry.h"
 
@@ -11,7 +13,7 @@ void init_viewport(const int x, const int y, const int w, const int h);
 void init_zbuffer(const int width, const int height);
 
 struct IShader {
-    virtual std::pair<bool,TGAColor> fragment(const vec3 bar) const = 0;
+    virtual std::pair<bool,TGAColor> fragment(const vec3 bar, int x, int y) const = 0;
 };
 
 typedef vec4 Triangle[3]; // a triangle primitive is made of three ordered points
