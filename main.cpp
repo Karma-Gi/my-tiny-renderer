@@ -313,16 +313,13 @@ int main(int argc, char **argv)
     std::vector<double> ao_buffer = compute_ssao(camera_zbuffer, normalbuffer, width, height);
     init_zbuffer(width, height);
 
-    // Camera pass (Phong shader render)
+    // Camera pass (Phong/Toon shader render)
+    vec4 color = {22 * 4, 56 * 4, 147 * 4, 255};
     for (const auto &model_ptr : models)
     {
         Model &model = *model_ptr;
-        PhongShader shader(
-            model,
-            light_position_world,
-            eye,
-            ao_buffer,
-            width);
+        // PhongShader shader(model, light_position_world, eye, ao_buffer, width);
+        ToonShader shader(model, color, light_position_world);
 
         for (int idx = 0; idx < model.nfaces(); idx++)
         {
@@ -335,36 +332,70 @@ int main(int argc, char **argv)
         }
     }
 
-    // Shadow pass (Shadow mapping as post-pocessing)
-    const mat<4, 4> camera_screen_to_world = (Viewport * Perspective * ModelView).invert();
+    // Edge Detection (Sobel)
+    constexpr double threshold = .1;
+    // Sobel Operator
+    mat<3, 3> sobel_kernel_x = {{{-1., 0., 1.},
+                                 {-2., 0., 2.},
+                                 {-1., 0., 1.}}};
+    mat<3, 3> sobel_kernel_y = {{{-1., -2., -1.},
+                                 {0., 0., 0.},
+                                 {1., 2., 1.}}};
 
-    write_ssao_image(ao_buffer, width, height);
-
-    lookat(light_position_world, center, up);
-    init_perspective(norm(light_position_world - center));
-    init_viewport(width / 16., width / 16., width * 7. / 8., height * 7. / 8.);
-    init_zbuffer(width, height);
-    TGAImage shadow_image(width, height, TGAImage::RGB);
-
-    for (const auto &model_ptr : models)
+    for (int y = 1; y < height; ++y)
     {
-        Model &model = *model_ptr;
-        BlankShader shader(model);
-
-        for (int face = 0; face < model.nfaces(); face++)
+        for (int x = 1; x < width; ++x)
         {
-            Triangle clip = {
-                shader.vertex(face, 0),
-                shader.vertex(face, 1),
-                shader.vertex(face, 2)};
-
-            rasterize(clip, shader, shadow_image);
+            double dx = 0.;
+            double dy = 0.;
+            for (int j = -1; j <= 1; j++)
+            {
+                for (int i = -1; i <= 1; i++)
+                {
+                    int conv_idx = (x + i) + (y + j) * width;
+                    double pixel = zbuffer[conv_idx];
+                    dx += sobel_kernel_x[j + 1][i + 1] * pixel;
+                    dy += sobel_kernel_y[j + 1][i + 1] * pixel;
+                }
+            }
+            double edge = std::sqrt(dx * dx + dy * dy);
+            if (edge > threshold)
+            {
+                framebuffer.set(x, y, TGAColor{0, 0, 0, 255});
+            }
         }
     }
 
-    const mat<4, 4> world_to_shadow_screen = Viewport * Perspective * ModelView;
-    const std::vector<double> shadowbuffer = zbuffer;
-    post_processing_shadow(framebuffer, camera_zbuffer, shadowbuffer, camera_screen_to_world, world_to_shadow_screen, width, height);
+    // Shadow pass (Shadow mapping as post-pocessing)
+    // const mat<4, 4> camera_screen_to_world = (Viewport * Perspective * ModelView).invert();
+
+    // write_ssao_image(ao_buffer, width, height);
+
+    // lookat(light_position_world, center, up);
+    // init_perspective(norm(light_position_world - center));
+    // init_viewport(width / 16., width / 16., width * 7. / 8., height * 7. / 8.);
+    // init_zbuffer(width, height);
+    // TGAImage shadow_image(width, height, TGAImage::RGB);
+
+    // for (const auto &model_ptr : models)
+    // {
+    //     Model &model = *model_ptr;
+    //     BlankShader shader(model);
+
+    //     for (int face = 0; face < model.nfaces(); face++)
+    //     {
+    //         Triangle clip = {
+    //             shader.vertex(face, 0),
+    //             shader.vertex(face, 1),
+    //             shader.vertex(face, 2)};
+
+    //         rasterize(clip, shader, shadow_image);
+    //     }
+    // }
+
+    // const mat<4, 4> world_to_shadow_screen = Viewport * Perspective * ModelView;
+    // const std::vector<double> shadowbuffer = zbuffer;
+    // post_processing_shadow(framebuffer, camera_zbuffer, shadowbuffer, camera_screen_to_world, world_to_shadow_screen, width, height);
 
     framebuffer.write_tga_file("framebuffer.tga");
     return 0;

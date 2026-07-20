@@ -54,3 +54,16 @@ struct NormalShader : IShader
     vec4 vertex(const int face, const int vert);
     std::pair<bool, TGAColor> fragment(const vec3 bar, int, int) const override;
 };
+
+struct ToonShader : IShader
+{
+    const Model &model;
+    vec4 color;
+    vec3 light_position_eye;
+    mat<3,3> normal_matrix;
+    vec3 varying_normal[3];
+
+    ToonShader(const Model &m, const vec4 color, const vec3 light);
+    vec4 vertex(const int face, const int vert);
+    std::pair<bool, TGAColor> fragment(const vec3, int, int) const override;
+};

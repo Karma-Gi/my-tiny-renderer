@@ -199,12 +199,7 @@ std::pair<bool, TGAColor> PhongShader::fragment(const vec3 bar, const int x, con
     for (int channel : {0, 1, 2})
     {
         fragment_color[channel] =
-            static_cast<std::uint8_t>(
-                std::clamp(
-                    diffuse_color.bgra[channel] *
-                        intensity,
-                    0.0,
-                    255.0));
+            static_cast<std::uint8_t>(std::clamp(diffuse_color.bgra[channel] * intensity, 0.0, 255.0));
     }
 
     fragment_color.bgra[3] = 255;
@@ -250,4 +245,55 @@ std::pair<bool, TGAColor> NormalShader::fragment(const vec3 bar, int, int) const
     color[2] = static_cast<std::uint8_t>(std::clamp(normal.z * 0.5 + 0.5, 0., 1.) * 255.);
     color[3] = 255;
     return {false, color};
+}
+
+ToonShader ::ToonShader(const Model &m, const vec4 color, vec3 light_position_world)
+    : model(m), color(color)
+{
+    vec4 light4 = ModelView * vec4{light_position_world.x, light_position_world.y, light_position_world.z, 1.};
+    light_position_eye = {light4.x, light4.y, light4.z};
+
+    const mat<3, 3> linear_modelview =
+        {{{ModelView[0][0],
+           ModelView[0][1],
+           ModelView[0][2]},
+          {ModelView[1][0],
+           ModelView[1][1],
+           ModelView[1][2]},
+          {ModelView[2][0],
+           ModelView[2][1],
+           ModelView[2][2]}}};
+
+    normal_matrix =
+        linear_modelview.invert().transpose();
+}
+
+vec4 ToonShader::vertex(const int face, const int vert)
+{
+    const vec3 position = model.vert(face, vert);
+    const vec3 normal_eye = normalized(normal_matrix * model.normal(face, vert));
+    varying_normal[vert] = normal_eye;
+    const vec4 position_eye = ModelView * vec4{position.x, position.y, position.z, 1.};
+
+    return Perspective * position_eye;
+}
+
+std::pair<bool, TGAColor> ToonShader::fragment(const vec3 bar, int, int) const
+{
+    const vec3 normal = normalized(varying_normal[0] * bar.x + varying_normal[1] * bar.y + varying_normal[2] * bar.z);
+
+    double diffuse = std::max(0., normal * light_position_eye); // diffuse light intensity
+
+    double intensity = .15 + diffuse; // a bit of ambient light + diffuse light
+    if (intensity > .66)
+        intensity = 1;
+    else if (intensity > .33)
+        intensity = .66;
+    else
+        intensity = .33;
+
+    TGAColor gl_FragColor;
+    for (int channel : {0, 1, 2})
+        gl_FragColor[channel] = std::min<int>(255, color[channel] * intensity);
+    return {false, gl_FragColor}; // do not discard the pixel
 }
