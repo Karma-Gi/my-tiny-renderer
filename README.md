@@ -15,6 +15,7 @@
 - 切线空间 TBN 矩阵与 Normal Mapping
 - Shadow Mapping（光源深度图、深度偏移与阴影测试）
 - Screen-Space Ambient Occlusion（观察空间位置重建、法线半球采样与距离衰减）
+- Toon Shading（离散光照色阶与基于深度缓冲的 Sobel 轮廓检测）
 - 可编程 Vertex/Fragment Shader 风格接口
 
 ## 渲染结果
@@ -24,6 +25,14 @@
 | Diablo III | Boggie | African Head |
 |:---:|:---:|:---:|
 | <img src="docs/images/diablo3_pose.png" width="260" alt="Diablo III 渲染结果"> | <img src="docs/images/boggie.png" width="260" alt="Boggie 渲染结果"> | <img src="docs/images/african_head.png" width="260" alt="African Head 渲染结果"> |
+
+### Toon Shading
+
+当前 ToonShader 将环境光与漫反射光照量化为三个离散色阶，并对相机 Z-Buffer 应用 Sobel 算子检测深度突变，以黑色轮廓强化卡通渲染效果。
+
+<p align="center">
+  <img src="docs/images/toonshader.png" width="600" alt="Diablo III ToonShader 渲染效果">
+</p>
 
 ### Screen-Space Ambient Occlusion
 
